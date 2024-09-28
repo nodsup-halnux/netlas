@@ -1,0 +1,10 @@
+:~
+  title+'Netlas'
+  info+'A Geospatial Network Visualizer for Urbit'
+  color+0x4b.c647
+  version+[0 1 0]
+  website+'https://github.com/nodsup-halnux/netlas'
+  license+'MIT'
+  base+'netlas'
+  site+/display
+==

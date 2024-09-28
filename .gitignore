@@ -1,1 +1,11 @@
- 
+dev-latest.pill
+urbit
+med
+zod 
+.dev-latest.pill
+**/*.mp3
+**/*.pyc
+**/notes&codesnippits.txt
+**/todo.md
+misc
+d-d-n-h
