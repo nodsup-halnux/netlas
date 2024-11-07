@@ -4,9 +4,26 @@ We First start by realizing that threads are a necessary **pain-in-the-ass**, th
 
 I lack the functional programming experience with notions such as Monadic functions and IO, so this will be a bottom-up grind of a notes/tutorial document.
 
-For the purposes of these notes, we will ignore Khan as it involves computations and threads outside of Vere (in the OS userspace).  All computations we consider will be within Arvo (minus fetching JSON or using some Eyre/Iris functionality).
+For the purposes of these notes, we will ignore Khan as it involves computations and threads outside of Vere (in the OS userspace).  All computations we consider will be within Arvo (minus fetching JSON or using some Eyre/Iris functionality). Yes, the new %spider references %khan in its implementation - we will try to keep the %khan details to a minimum.
 
 Its time to begin:
+
+## Goals:
+
+By the end of this document, we should:
+
+1) Understand threads at a deep level. By this, I mean knowing how Spider works, a deep grasp of all relevant structures and what **exactly** micgal is doing, with all syntactic sugar removed.
+
+2) Launch basic threads on Dojo.
+
+3) Launch medium complexity threads on Dojo - ones that spawn a few children, or children of children for modest computational work.
+
+4) Launching a thread from a Gall App, with:
+
+    i) A JSON thread, where we parse with de-json (essential).
+
+    ii) An internal thread, that launches a few children and consolidates results.
+
 
 ##  What are Threads:
 
@@ -19,13 +36,12 @@ Its time to begin:
 ### Basic Facts:
 - Threads live in the /ted folder.
 - Calling a Thread in Dojo:  `-deskname!threadname`. In `%base` you can just do `-threadname`.
-- Thread management is done by %spider, which lives in app space.
+- Thread management is done by %spider, which lives in /app space.
 - Libraries+Files involved:
-    - spider.hoon: high-level management, and imports libstrand.hoon
-    - strand.hoon: **Empty!** Main functions and definitions for strand are in lull.hoon, and in spider.hoon, referenced in the ++  rand arm.  These are in the global namespace, so imported.
-    - strandio.hoon:  Contains lots of high-level gates that package common thread/strand operations. Useful.
-- A thread contains a number of strands, which are the basic child unit of compilation. Think of Thread as a kind of Process.
-
+    - **spider.hoon:** high-level management, and imports libstrand.hoon
+    - **strand.hoon:** **Empty!** Main functions and definitions for strand are in lull.hoon, and in spider.hoon, referenced in the `++rand` arm.  These are in the global namespace, so imported.
+    - **strandio.hoon:**  Contains lots of high-level gates that package common thread/strand operations. Useful.
+- A thread contains a number of strands, which are the basic child unit of compilation.
 
 ### Thread Definitions:
 
@@ -117,9 +133,13 @@ For reference, a yarn is a `(list tid)`.
     ==
   (take-input yarn ~)
 ```
-- Here we register a jet to start the thread. There is lots of functionality to check if the thread is erroneous. We also invoke the eval function, which is not mentioned in modern documentation.
-- A thread structure here is an `+$-(vase _*form:(strand ,vase))`.  In other words, it is a gate that pins a vase as a sample, and has
+- Here we register a jet to start the thread. There is lots of functionality to check if the thread is erroneous. We also invoke the `eval` function, which is not mentioned in modern documentation.
+- A thread structure here is an `+$-(vase _*form:(strand ,vase))`.  In other words, it is a gate that pins a vase as a sample, and has a body that produces the form of a strand.  See the sample image below:
 
+<<strand image>>
+
+
+- Note that the thread will always return a vase. Strands (later) can be specialized to other types (@ud, maps, etc).
 
 ```
 ++  handle-build
@@ -143,7 +163,7 @@ For reference, a yarn is a `(list tid)`.
 
 ```
 
-- This gate interacts with clay, to actually build a thread file (that would be found in /ted). %handle-build is also a registered jet (strangely? why?).
+- This gate interacts with Clay, to actually build a thread file (that would be found in /ted). %handle-build is also a registered jet (strangely? why?).
 
 ```
 ++  thread-fail
@@ -169,7 +189,7 @@ For reference, a yarn is a `(list tid)`.
 
 - this is much more reliant on %khan, to hand things off. It ends up being a smaller file. Lets compare the three gates we showcased above:
 
-- Firstly, note that `start-thread` no longer exists. We have two types of threads now compilable, and inline threads.  See the relevent code:
+- Firstly, note that `start-thread` no longer exists. We have two types of threads now: *compilable, and inline threads.*  See the relevent code:
 
 ```
 ++  handle-start-thread
@@ -182,7 +202,7 @@ For reference, a yarn is a `(list tid)`.
   |=  [parent-tid=(unit tid) use=(unit tid) =beak =shed:khan]
   (prep-thread parent-tid use beak %& shed)
 ```
-- In the first gate, most of the work is handed of to prep-thread.  In the second, we see a khan reference added for the inline type.  Lets look at prep thread:
+- In the first gate, most of the work is handed off to prep-thread.  In the second, we see a %khan reference added for the inline type.  Lets look at prep thread:
 
 ```
 ++  prep-thread
@@ -234,8 +254,7 @@ For reference, a yarn is a `(list tid)`.
   ==
 
 ```
-Prep thread processes all of the input arguments and paths needed to run 
-the thread.  There is some corner case checking, and error checking. The important part is at the end. **A thread is dispatched using a %pass card, with a `/build/t-id` wire, and an %arvo-note that is addressed to %clay.  The thread is started in clay!**
+- Prep thread processes all of the input arguments and paths needed to run the thread.  There is some corner case checking, and error checking. The important part is at the end. **A thread is dispatched using a %pass card, with a `/build/t-id` wire, and an %arvo-note that is addressed to %clay.  The thread is started in clay!**
 
 - Clay compiles files and does state management, but it doesn't say anywhere that it runs compiled files.
 
@@ -246,15 +265,164 @@ the thread.  There is some corner case checking, and error checking. The importa
 
 ```
 
-
 - So how are our threads actually run (???)
 
-- Note that `handle-build` and `thread-fail are largely unchanged.
+- Note that `handle-build` and `thread-fail are **largely unchanged**.
+
+### Understanding Monadic IO:
+
+| **Monadic IO Concept** | **Description** | **Generic Pseudocode**               | **JavaScript Promise Equivalent**    |
+|------------------------|-----------------|--------------------------------------|--------------------------------------|
+| **Monadic Type (IO)**  | A structure representing a computation that will eventually produce a value, but has not done so yet. | `IO<T>` represents a deferred value of type `T` | `Promise<T>` represents a deferred value of type `T` |
+| **`pure`**             | Wraps a regular value into the monadic structure, representing it as a computation that produces that value. | `IO.pure(value)`                    | `Promise.resolve(value)`              |
+| **`bind`**             | Chains computations, taking a monadic value and a function that transforms the contained value, producing a new monadic value. | `ioValue.bind(fn)`                  | `promise.then(fn)`                    |
+| **Sequential Execution** | Runs each operation in sequence, allowing the result of each to pass to the next. | `ioA.bind(ioB).bind(ioC)`           | `promiseA.then(promiseB).then(promiseC)` |
+| **Side Effect Isolation** | Encapsulates side effects (e.g., IO actions) in a monadic context, allowing controlled execution flow. | `IO.perform(effect)`                | `Promise` chains keep effects isolated in `.then` callbacks |
+| **Error Handling**     | Catches and handles errors that occur within the monadic chain. | `ioValue.catch(handleError)`        | `promise.catch(handleError)`          |
+
 
 ## Strands:
 
 - Although Spider and the idea of threads are how computations are handled, much of the low-level work in chaining together a computation is done with **Strands**. These have their own structures and non-trivial functionality, which we will go into.
 
+- Once again, all strand definitions are in the **rand arm of lull.hoon.**
+
+- Conceptually, a strand is a function of strand-input to strand-output.
+
+- Strands have four important arms:
+    - **form**:  Which is the mold of a strand.
+    - **pure**:  Produces an instance of a strand that just returns a value.
+    - **bind**: Produces a monadic bind (read: kind of Promise), that returns an output, or branches on an error.
+    - **eval**: This is more behind the scenes arm. It works with take to get inputs, and progress the strand's computation.
+
+### Structures:
+
+```
+    $+  input
+    $%  [%poke =cage]
+        [%sign =wire =sign-arvo]
+        [%agent =wire =sign:agent:gall]
+        [%watch =path]
+    ==
+```
+
+- An `input` is just a tagged cell, that has Gall agent head tags. For the poke, agent, arvo and watch arms, respectively.  The inputs to the strand are just kept in cages, or other structures.
+
+```
+  +$  strand-input
+    $+  strand-input
+    [=bowl in=(unit input)]
+
+```
+
+- Strand are given our (unit input), and the usual Gall Bowl to do work with.
+
+### Gates and Calls:
+
+```
+  ++  strand-output-raw
+    |*  a=mold
+    $+  strand-output-raw
+    $~  [~ %done *a]
+    $:  cards=(list card)
+        $=  next
+        $%  [%wait ~]
+            [%skip ~]
+            [%cont self=(strand-form-raw a)]
+            [%fail err=error]
+            [%done value=a]
+        ==
+    ==
+```
+
+- A wet gate, with a mold input. 
+- We redefine a strand-output-raw structure inside the gate.
+- $~ defines a custom default value, with a structured tail. Our default value is `[~ %done *a]`, where our mold is bunted for an instance.
+- The tail is a cell, with the first cell typed for cards. The inner tail is tagged with next, and contains signal cells
+- Notice the **non-triviality** of %cont: we reference strand-form-raw to begin again.
+
+
+```
+  ++  strand-form-raw
+    |*  a=mold
+    $+  strand-form-raw
+    $-(strand-input (strand-output-raw a))
+
+```
+
+- Note the appearance of a wet gate here - one that is taking in a structure (mold), and can take in and return various types.
+- We see the gate name repated in a $+ structure definition. Here, strand-form raw is being specialized.
+- The following line `$-(strand-input (strand-output-raw a))` can be interpreted as follows:
+    - $- is a wide form of %-, we have a gate with one input and a body.
+    - strand input is our pinned sample, which is a bowl and some input tag + binary storage stucture (like cages)
+    -  the code body of our gate is another gate which is a strand-output-raw and our mold a that was our input.
+    - So we have a mold gate, that has a specific structured input, and produces a specific structured output (strand-output-raw). This is not an instance!
+
+
+####  The Strand Gate:
+
+- this is a wet gate with a large core nested inside. It is more complex in its struturing.
+- a is again a type of mold we pin as the sample head of the gate.
+
+```
+++  output  $+(output (strand-output-raw a))
+```
+
+- First we have a tall form of $+, which is used for pretty printing. The alias is output, and our inner %- produces a 2-cell (as seen above).  Note that we have wrapped out structure and bound a name, it can still be used, but has pretty printer information bound to it (for debugging, likely)
+
+```
+    ++  form  $+(form (strand-form-raw a))
+```
+
+- Same explanation as above.
+
+```
+    ++  pure
+      |=  arg=a
+      ^-  form
+      |=  strand-input
+      [~ %done arg]
+```
+
+- Notice a non-wet gate here. Generic arg a, and a return type of form is given as a compiler hint. We return a gate that maps a strand-input to the default output. We don't care about a, its not even used.
+
+
+```
+    ++  bind
+      |*  b=mold
+      |=  [m-b=(strand-form-raw b) fun=$-(b form)]
+      ^-  form
+      |=  input=strand-input
+      =/  b-res=(strand-output-raw b)
+        (m-b input)
+      ^-  output
+      :-  cards.b-res
+      ?-    -.next.b-res
+        %wait  [%wait ~]
+        %skip  [%skip ~]
+        %cont  [%cont ..$(m-b self.next.b-res)]
+        %fail  [%fail err.next.b-res]
+        %done  [%cont (fun value.next.b-res)]
+      ==
+
+```
+
+- Another wet gate, with an input cell consisting of the following:
+    - `m-b=(strand-form-raw b)` recall: this is a mold gate, that has a specific structured input, and produces a specific structured output (strand-output-raw). This is not an instance!
+    - `fun=$-(b form)` $- normalizes [???]
+- we again return something of type form.
+- We define a gate that takes a `strand-input`, which is ~ or one of our Gall tagged cells for arms, and a cage/storage structure.
+- pinned to the subject is b-res, which is a gate that takes `mold` to `[card next ...]` cell.
+- we compute (m-b input) [???] which is necessarily a gate.
+- for nested gate, we have an `output`, which is really a `strand-output-raw`
+- the code below this then processes the next and signal stack of elements in the output, and returns a cell accordingly.
+
+- **Question:** Which gates call `++ bind`?  Answer: **None in lull.hoon**.  This is an externally facing function.
+
+
+- `Eval` just repackages `form`, so we won't worry about it here.
+
+- Now we move onto take, where is where the real work is done!  Comments are included in the code.
 
 
 ## References and Footnotes:
@@ -269,3 +437,5 @@ the thread.  There is some corner case checking, and error checking. The importa
 
 [] Old Spider Code: https://github.com/urbit/urbit/blob/571649c6313e0f9d906b092b9c532b543e9510e5/pkg/arvo/app/spider.hoon
 Note:  You might need to look at historical revisions to see the code.
+
+[] https://chatgpt.com/share/672d011c-94a8-8007-a502-511044acf11d
